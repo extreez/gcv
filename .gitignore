@@ -1,0 +1,15 @@
+# порождённые провайдеры не коммитятся в репозиторий скилла
+gcv-*/
+!templates/
+
+node_modules/
+package-lock.json
+.env
+.env.local
+*.tgz
+
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

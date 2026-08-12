@@ -1,0 +1,7 @@
+{
+  "_warning": "SEED catalog. A hint about model families, NOT a source of truth. Every entry is verified=false with a null price. Run `catalog refresh` before the first generation, and if that cannot fetch anything, fill the catalog via `catalog set`/`catalog import` from the service documentation.",
+  "contract": "1",
+  "provider": "__SERVICE__",
+  "fetchedAt": null,
+  "models": []
+}

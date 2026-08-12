@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  template:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: scaffold a throwaway provider
+        shell: bash
+        run: |
+          node templates/scaffold.mjs \
+            --service demo --name "Demo Service" \
+            --base-url https://api.demo.test \
+            --out "$RUNNER_TEMP/gcv-demo"
+          test -f "$RUNNER_TEMP/gcv-demo/src/provider.mjs"
+          test -f "$RUNNER_TEMP/gcv-demo/bin/gcv-demo.mjs"
+
+      # Свежий каркас обязан провалить ровно одну проверку — незакрытые TODO в
+      # provider.mjs. Если провалилось что-то ещё, сломан сам шаблон.
+      - name: contract check finds only the open TODOs
+        shell: bash
+        env:
+          GCV_HOME: ${{ runner.temp }}/gcv-home
+        run: |
+          set +e
+          node templates/verify-contract.mjs "$RUNNER_TEMP/gcv-demo" > out.txt 2>&1
+          code=$?
+          set -e
+          cat out.txt
+
+          [ "$code" = "1" ] || { echo "expected exit 1 for an unfilled template, got $code"; exit 1; }
+
+          fails=$(grep -c '✗' out.txt || true)
+          [ "$fails" = "1" ] || { echo "expected exactly 1 failing check, got $fails"; exit 1; }
+
+          grep -q 'TODOs closed' out.txt || { echo "the single failure must be the open TODOs"; exit 1; }
+          echo "template is sound: only the intended TODO check fails"
+
+      - name: generated CLI is dependency-free
+        shell: bash
+        run: |
+          node -e "
+            const p = require(process.env.RUNNER_TEMP + '/gcv-demo/package.json');
+            const n = Object.keys(p.dependencies || {}).length;
+            if (n) { console.error('generated package must be zero-dep, found ' + n); process.exit(1); }
+            console.log('zero-dep ok');
+          "
+
+      # Порождённый CLI попадает к пользователям как есть — интерфейс должен
+      # остаться английским.
+      - name: template sources are english only
+        shell: bash
+        run: |
+          if grep -rlP '[\x{0400}-\x{04FF}]' templates/cli-template/bin templates/cli-template/src templates/cli-template/mcp templates/scaffold.mjs templates/verify-contract.mjs 2>/dev/null | grep .; then
+            echo "Cyrillic found in template sources (see files above)"
+            exit 1
+          fi
+          echo "no Cyrillic in template sources"

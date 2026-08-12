@@ -1,0 +1,25 @@
+{
+  "name": "gcv-__SERVICE__",
+  "version": "0.1.0",
+  "description": "Standalone CLI and MCP server for __SERVICE_NAME__. Conforms to CLI-CONTRACT v1.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "gcv-__SERVICE__": "bin/cli.mjs",
+    "gcv-__SERVICE__-mcp": "mcp/server.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./provider": "./src/provider.mjs",
+    "./generate": "./src/generate.mjs"
+  },
+  "files": ["bin", "src", "mcp", "README.md", "INSTALL.md"],
+  "scripts": {
+    "smoke": "node bin/cli.mjs doctor --json"
+  },
+  "dependencies": {},
+  "keywords": ["gcv", "__SERVICE__", "ai", "image-generation", "mcp"]
+}
