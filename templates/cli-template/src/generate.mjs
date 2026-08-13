@@ -88,6 +88,9 @@ export function preflight({ model: modelId, input, refs = [], count = 1 }) {
  * price stays unknown.
  */
 export function estimate({ model: modelId, count = 1, input = {}, refs = [] }) {
+  // Costing a model you have forbidden yourself to call is a trap: the number
+  // looks like a plan, and the plan cannot be carried out.
+  store.assertEnabled(modelId);
   const { model, staleness } = store.show(modelId);
   const price = model.price ?? {};
   const perUnit = price.credits ?? null;

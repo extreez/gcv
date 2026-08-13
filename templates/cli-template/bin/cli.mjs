@@ -16,7 +16,7 @@ const S = cfg.SERVICE;
 
 const REPEATABLE = new Set(['ref', 'file']);
 const BOOLEAN = new Set(['json', 'quiet', 'verbose', 'no-color', 'yes', 'dry-run', 'wait', 'force',
-  'replace', 'help', 'version', 'raw', 'failed', 'by-model', 'no-download']);
+  'replace', 'help', 'version', 'raw', 'failed', 'by-model', 'no-download', 'all']);
 
 function parseArgs(argv) {
   const flags = {}; const positional = [];
@@ -123,7 +123,32 @@ const commands = {
         inputSchema: flags['input-schema'] ? parseInput(flags['input-schema']) : null,
         notes: flags.notes ?? null, source: flags.source ?? 'manual', verified: flags.verified !== 'false',
       });
-      return ok({ model: saved }, {}, (d) => `${color.green('✓')} stored: ${d.model.id}`);
+      return ok({ model: saved }, {}, (d) =>
+        `${color.green('✓')} stored by hand: ${d.model.id}\n` +
+        color.dim(`  Kept apart from the fetched catalog — sync will not remove it.\n`) +
+        color.dim(`  Undo: gcv-${S} catalog unset ${d.model.id}`),
+      );
+    }
+    if (sub === 'unset') {
+      const id = positional[1] || flags.model;
+      if (!id) throw usage(`gcv-${S} catalog unset <model>`);
+      const removed = store.unset(id);
+      return ok({ model: id, removed }, {}, (d) =>
+        d.removed
+          ? `${color.green('✓')} manual entry removed: ${d.model}`
+          : `${color.yellow('!')} ${d.model} was not entered by hand — nothing to remove.`,
+      );
+    }
+    if (sub === 'disable' || sub === 'enable') {
+      const id = positional[1] || flags.model;
+      if (!id) throw usage(`gcv-${S} catalog ${sub} <model>`);
+      const r = store.setEnabled(id, sub === 'enable');
+      return ok(r, {}, (d) =>
+        d.disabled
+          ? `${color.yellow('○')} switched off: ${d.model}\n` +
+            color.dim('  Hidden from listings, and generate will refuse it. Survives sync.')
+          : `${color.green('●')} switched on: ${d.model}`,
+      );
     }
     if (sub === 'import') {
       const path = positional[1] || flags.file;
@@ -131,7 +156,9 @@ const commands = {
       const raw = JSON.parse(readFileSync(resolve(String(path)), 'utf8'));
       const entries = Array.isArray(raw) ? raw : raw.models || [];
       if (!entries.length) throw usage('No models in the file (expected an array or {models: []})');
-      return ok(store.importModels(entries, { replace: !!flags.replace }), {}, (d) => `${color.green('✓')} catalog now holds ${d.count} models`);
+      return ok(store.importModels(entries, { replace: !!flags.replace }), {}, (d) =>
+        `${color.green('✓')} imported ${d.added}, ${d.manual} manual models total ${color.dim(`(${d.count} in the catalog)`)}`,
+      );
     }
     const r = store.list({ type: flags.type, mode: flags.mode, query: flags.query });
     return ok(r, {}, (d) => {
@@ -167,8 +194,11 @@ const commands = {
   },
 
   async generate(flags) {
-    const { key, source } = cfg.requireApiKey(flags['api-key']);
     if (!flags.model) throw usage(`gcv-${S} generate --model <id> --prompt <text> [--wait] [--out DIR] [--no-download]`);
+    // Before the key: a model switched off here will not be called whatever the
+    // key says, and "set up an API key first" would be a misleading answer.
+    store.assertEnabled(flags.model);
+    const { key, source } = cfg.requireApiKey(flags['api-key']);
 
     let balance = null;
     if (!flags['dry-run']) {
