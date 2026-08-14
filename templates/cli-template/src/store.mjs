@@ -111,6 +111,10 @@ export function normalizeModel(m) {
     endpoint: m.endpoint ?? null,
     title: m.title ?? null,
     limits: {
+      // Where reference images go, null when the model takes none. This — not
+      // maxRefs — answers 'does it accept references': maxRefs null next to a
+      // refField means 'accepts them, no limit declared'.
+      refField: m.limits?.refField ?? null,
       maxRefs: m.limits?.maxRefs ?? null,
       maxPromptChars: m.limits?.maxPromptChars ?? null,
       aspectRatios: m.limits?.aspectRatios ?? null,

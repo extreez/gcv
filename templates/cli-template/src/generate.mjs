@@ -34,6 +34,23 @@ function applyRequiredDefaults(model, input) {
 
 /** Returns the input with required-field defaults applied — that object, not
  * the original one, is what must flow on into estimate()/createTask(). */
+/**
+ * The input field a model takes reference images in — image_urls for one
+ * provider, image_input or first_frame_url for the next. It comes from the
+ * catalog (CLI-CONTRACT §8 limits.refField), never from a hardcoded name:
+ * sending a reference to the wrong field is not an error the service reports,
+ * it is a paid generation that ignored the reference.
+ */
+const refFieldOf = (model) => model?.limits?.refField ?? null;
+
+/** Images already sitting in the model's own reference field. */
+function countInputRefs(model, input) {
+  const field = refFieldOf(model);
+  if (!field || !input) return 0;
+  const v = input[field];
+  return Array.isArray(v) ? v.length : v ? 1 : 0;
+}
+
 export function preflight({ model: modelId, input, refs = [], count = 1 }) {
   const warnings = [];
   const { model, staleness } = store.show(modelId);
@@ -43,8 +60,20 @@ export function preflight({ model: modelId, input, refs = [], count = 1 }) {
   if (staleness.isStale) warnings.push(`Catalog is stale (${staleness.fetchedAt ?? 'never'}) — prices may not match reality`);
 
   const lim = model.limits || {};
-  if (lim.maxRefs != null && refs.length > lim.maxRefs)
-    throw validation(`Model ${model.id} accepts at most ${lim.maxRefs} references, ${refs.length} given`, { maxRefs: lim.maxRefs, given: refs.length });
+  const refField = refFieldOf(model);
+  // A reference with nowhere to go must stop here, before the paid call.
+  if (refs.length && !refField)
+    throw validation(
+      `Model ${model.id} does not accept reference images (no limits.refField in the catalog): ` +
+        `they would be dropped and the generation billed without them`,
+      { refField: null, given: refs.length },
+    );
+
+  // Images already in the model's own field count towards the limit: --ref is
+  // appended to them, it does not replace them.
+  const totalRefs = refs.length + countInputRefs(model, input);
+  if (lim.maxRefs != null && totalRefs > lim.maxRefs)
+    throw validation(`Model ${model.id} accepts at most ${lim.maxRefs} references, ${totalRefs} given`, { maxRefs: lim.maxRefs, given: totalRefs, viaRef: refs.length, refField });
 
   const prompt = input?.prompt;
   if (lim.maxPromptChars != null && typeof prompt === 'string' && prompt.length > lim.maxPromptChars)
@@ -58,7 +87,7 @@ export function preflight({ model: modelId, input, refs = [], count = 1 }) {
   if (dur != null && lim.maxDurationSec != null && Number(dur) > lim.maxDurationSec)
     throw validation(`Duration ${dur}s exceeds the limit of ${lim.maxDurationSec}s`, { maxDurationSec: lim.maxDurationSec, given: dur });
 
-  if (!prompt && !input?.image_urls?.length && !refs.length)
+  if (!prompt && !countInputRefs(model, input) && !refs.length)
     throw validation('Need --prompt, or at least one --ref/--input with model parameters');
 
   if (count < 1 || count > 50) throw validation(`--count is out of sane bounds: ${count} (allowed 1..50)`);
@@ -67,7 +96,8 @@ export function preflight({ model: modelId, input, refs = [], count = 1 }) {
     if (!/^https?:\/\//.test(r) && !existsSync(r)) throw validation(`Reference not found and is not a URL: ${r}`);
   }
 
-  const missingRequired = (model.required || []).filter((f) => input[f] === undefined);
+  // A required reference field is satisfied by --ref: the URLs land there below.
+  const missingRequired = (model.required || []).filter((f) => input[f] === undefined && !(refs.length && f === refField));
   if (missingRequired.length) {
     throw validation(
       `Model ${model.id} requires field(s) with no default: ${missingRequired.join(', ')}.`,
@@ -105,7 +135,7 @@ export function estimate({ model: modelId, count = 1, input = {}, refs = [] }) {
   if (batch > 1) units = Math.ceil(units / batch);
 
   // Separate surcharge for input images, where the service charges one.
-  const refCount = refs.length + (input.image_urls?.length ?? 0);
+  const refCount = refs.length + countInputRefs(model, input);
   const surcharge = price.inputSurcharge?.credits ? price.inputSurcharge.credits * refCount : 0;
 
   const estCredits = perUnit == null ? null : perUnit * units + surcharge;
@@ -221,7 +251,13 @@ export async function generate(apiKey, opts) {
 
   if (refs.length) {
     const urls = await resolveRefs(apiKey, refs, timeoutMs);
-    input.image_urls = [...(input.image_urls || []), ...urls];
+    // Into the field the catalog names for THIS model. preflight has already
+    // refused the case where there is none.
+    const field = refFieldOf(pre.model);
+    const def = pre.model.inputSchema?.[field];
+    const isArray = def ? def.type === 'array' : (pre.model.limits?.maxRefs ?? 0) !== 1;
+    const current = input[field] == null ? [] : Array.isArray(input[field]) ? input[field] : [input[field]];
+    input[field] = isArray ? [...current, ...urls] : urls[0];
   }
 
   const key = userKey || store.idempotencyKey({ model: modelId, input, count });

@@ -115,6 +115,7 @@ const commands = {
         modes: flags.modes ? String(flags.modes).split(',').map((s) => s.trim()) : [],
         price: { unit: flags['price-unit'] ?? null, credits: num(flags.credits, 'credits') ?? null },
         limits: {
+          refField: flags['ref-field'] ?? null,
           maxRefs: num(flags['max-refs'], 'max-refs') ?? null,
           maxPromptChars: num(flags['max-prompt-chars'], 'max-prompt-chars') ?? null,
           aspectRatios: flags['aspect-ratios'] ? String(flags['aspect-ratios']).split(',') : null,
@@ -489,7 +490,9 @@ const commands = {
     // Utilities (upscale, background removal) are not generation — keep them out.
     pool = pool.filter((m) => !/upscale|remove-background|background-removal|separate|isolation/i.test(m.id));
     if (GEN_MODES.length) pool = pool.filter((m) => !m.modes?.length || m.modes.some((x) => GEN_MODES.includes(x)));
-    if (refs > 0) pool = pool.filter((m) => (m.limits.maxRefs ?? 0) >= refs);
+    // A model qualifies when it HAS a reference field and its declared ceiling is
+    // not lower than asked. An undeclared ceiling is not a zero.
+    if (refs > 0) pool = pool.filter((m) => m.limits.refField && (m.limits.maxRefs == null || m.limits.maxRefs >= refs));
     if (budget != null) pool = pool.filter((m) => (m.price.creditsMax ?? m.price.credits) <= budget);
 
     if (!pool.length) {
