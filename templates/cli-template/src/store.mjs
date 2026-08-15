@@ -116,6 +116,12 @@ export function normalizeModel(m) {
       // refField means 'accepts them, no limit declared'.
       refField: m.limits?.refField ?? null,
       maxRefs: m.limits?.maxRefs ?? null,
+      // Every file input the model takes, images included:
+      // [{name, kind, maxItems, role}], empty when it takes none. A list rather
+      // than a field per kind, so a new kind of input needs no new field in the
+      // contract. refField above is the entry whose role is "primary" — a
+      // pointer into this list, not a second answer that can drift from it.
+      inputFiles: m.limits?.inputFiles ?? [],
       maxPromptChars: m.limits?.maxPromptChars ?? null,
       aspectRatios: m.limits?.aspectRatios ?? null,
       maxDurationSec: m.limits?.maxDurationSec ?? null,

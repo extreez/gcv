@@ -43,15 +43,31 @@ function applyRequiredDefaults(model, input) {
  */
 const refFieldOf = (model) => model?.limits?.refField ?? null;
 
-/** Images already sitting in the model's own reference field. */
-function countInputRefs(model, input) {
-  const field = refFieldOf(model);
+/**
+ * Every file input the model declares (CLI-CONTRACT §8 limits.inputFiles), each
+ * with its kind, its ceiling and its role. `refField` above is not a second
+ * answer beside this list — it is the name of the entry marked role "primary".
+ *
+ * A model routinely has more than one: a frame to end on, a mask to paint
+ * through, a clip to continue, an audio track to lip-sync. Report only the
+ * primary one and the rest are unreachable — the consumer cannot offer a slot
+ * for a field it was never told about.
+ */
+const inputFilesOf = (model) => model?.limits?.inputFiles ?? [];
+
+const sameField = (a, b) => !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+
+/** Files already sitting in one named field of --input. */
+function countInputField(input, field) {
   if (!field || !input) return 0;
-  const v = input[field];
+  const v = input[String(field).trim()];
   return Array.isArray(v) ? v.length : v ? 1 : 0;
 }
 
-export function preflight({ model: modelId, input, refs = [], count = 1 }) {
+/** Images already sitting in the model's own reference field. */
+const countInputRefs = (model, input) => countInputField(input, refFieldOf(model));
+
+export function preflight({ model: modelId, input, refs = [], files = [], count = 1 }) {
   const warnings = [];
   const { model, staleness } = store.show(modelId);
   input = applyRequiredDefaults(model, input);
@@ -69,9 +85,44 @@ export function preflight({ model: modelId, input, refs = [], count = 1 }) {
       { refField: null, given: refs.length },
     );
 
+  // --file <field>=<path>: a file addressed to an input the model names itself.
+  // --ref covers the primary image and nothing else, so every other declared
+  // field needs a way to be reached. A field the model does not declare is
+  // refused HERE: the service accepts an unknown key, bills the task and
+  // generates without the file, which is the expensive way to find out.
+  const declared = inputFilesOf(model);
+  const fileFields = [];
+  for (const { field, value } of files) {
+    const slot = declared.find((f) => sameField(f.name, field));
+    if (!slot)
+      throw validation(
+        `Model ${model.id} has no input field "${field}", so the file would be dropped and the ` +
+          `generation billed without it. ` +
+          (declared.length
+            ? `The fields it does take: ${declared.map((f) => `${f.name} (${[f.kind, f.role].filter(Boolean).join(', ')})`).join(', ')}.`
+            : `It takes no files at all.`),
+        { field, inputFiles: declared },
+      );
+    const entry = fileFields.find((f) => sameField(f.field, slot.name)) ?? { field: slot.name, values: [] };
+    if (!entry.values.length) fileFields.push(entry);
+    entry.values.push(value);
+  }
+  for (const { field, values } of fileFields) {
+    // Everything headed for the SAME field counts towards its ceiling.
+    const ceiling = declared.find((f) => sameField(f.name, field))?.maxItems ?? null;
+    const total = values.length + countInputField(input, field) + (sameField(field, refField) ? refs.length : 0);
+    if (ceiling != null && total > ceiling)
+      throw validation(`Model ${model.id} accepts at most ${ceiling} file(s) in ${field}, ${total} given`, {
+        field, maxItems: ceiling, given: total,
+      });
+  }
+
   // Images already in the model's own field count towards the limit: --ref is
   // appended to them, it does not replace them.
-  const totalRefs = refs.length + countInputRefs(model, input);
+  const totalRefs =
+    refs.length +
+    countInputRefs(model, input) +
+    fileFields.filter((f) => sameField(f.field, refField)).reduce((s, f) => s + f.values.length, 0);
   if (lim.maxRefs != null && totalRefs > lim.maxRefs)
     throw validation(`Model ${model.id} accepts at most ${lim.maxRefs} references, ${totalRefs} given`, { maxRefs: lim.maxRefs, given: totalRefs, viaRef: refs.length, refField });
 
@@ -87,17 +138,27 @@ export function preflight({ model: modelId, input, refs = [], count = 1 }) {
   if (dur != null && lim.maxDurationSec != null && Number(dur) > lim.maxDurationSec)
     throw validation(`Duration ${dur}s exceeds the limit of ${lim.maxDurationSec}s`, { maxDurationSec: lim.maxDurationSec, given: dur });
 
-  if (!prompt && !countInputRefs(model, input) && !refs.length)
-    throw validation('Need --prompt, or at least one --ref/--input with model parameters');
+  if (!prompt && !countInputRefs(model, input) && !refs.length && !fileFields.length)
+    throw validation('Need --prompt, or at least one --ref/--file/--input with model parameters');
 
   if (count < 1 || count > 50) throw validation(`--count is out of sane bounds: ${count} (allowed 1..50)`);
 
   for (const r of refs) {
     if (!/^https?:\/\//.test(r) && !existsSync(r)) throw validation(`Reference not found and is not a URL: ${r}`);
   }
+  for (const { field, values } of fileFields) {
+    for (const v of values) {
+      if (!/^https?:\/\//.test(v) && !existsSync(v)) throw validation(`--file ${field} not found and is not a URL: ${v}`);
+    }
+  }
 
-  // A required reference field is satisfied by --ref: the URLs land there below.
-  const missingRequired = (model.required || []).filter((f) => input[f] === undefined && !(refs.length && f === refField));
+  // A required file field is satisfied by the flag that fills it: the URLs land
+  // there below, after this check and before the paid call.
+  const filled = new Set(fileFields.map((f) => f.field.trim().toLowerCase()));
+  if (refs.length && refField) filled.add(refField.trim().toLowerCase());
+  const missingRequired = (model.required || []).filter(
+    (f) => input[f] === undefined && !filled.has(String(f).trim().toLowerCase()),
+  );
   if (missingRequired.length) {
     throw validation(
       `Model ${model.id} requires field(s) with no default: ${missingRequired.join(', ')}.`,
@@ -105,7 +166,7 @@ export function preflight({ model: modelId, input, refs = [], count = 1 }) {
     );
   }
 
-  return { ok: true, warnings, model, input };
+  return { ok: true, warnings, model, input, refField, fileFields };
 }
 
 /**
@@ -229,7 +290,7 @@ async function resolveRefs(apiKey, refs, timeoutMs) {
 
 export async function generate(apiKey, opts) {
   const {
-    model: modelId, prompt, input: rawInput = {}, refs = [], count = 1, out = null,
+    model: modelId, prompt, input: rawInput = {}, refs = [], files = [], count = 1, out = null,
     wait = false, pollSec = 10, timeoutMs = 60_000, waitTimeoutSec = 900,
     maxCostCredits = null, idempotencyKey: userKey = null, force = false,
     dryRun = false, runId = null, balance = null, callBackUrl = null,
@@ -239,25 +300,34 @@ export async function generate(apiKey, opts) {
   if (prompt) input.prompt = prompt;
 
   // pre.input carries the required-field defaults from the schema.
-  const pre = preflight({ model: modelId, input, refs, count });
+  const pre = preflight({ model: modelId, input, refs, files, count });
   input = pre.input;
   const est = estimate({ model: modelId, count, input, refs });
   guardBudget({ est, maxCostCredits, balance, count });
 
   if (dryRun) {
     return { dryRun: true, tasks: [], estimate: est, warnings: pre.warnings,
+             // Which field each file would land in. A dry run that hides this
+             // cannot answer the one question worth asking before paying.
+             refField: refs.length ? pre.refField : null,
+             fileFields: pre.fileFields.map((f) => ({ field: f.field, count: f.values.length })),
              totals: { estCredits: est.estCredits, creditsConsumed: 0, actualUsd: 0 } };
   }
 
-  if (refs.length) {
-    const urls = await resolveRefs(apiKey, refs, timeoutMs);
-    // Into the field the catalog names for THIS model. preflight has already
-    // refused the case where there is none.
-    const field = refFieldOf(pre.model);
+  /** Uploads what needs uploading and puts the URLs into one named field. */
+  const place = async (field, values, ceiling) => {
+    const urls = await resolveRefs(apiKey, values, timeoutMs);
     const def = pre.model.inputSchema?.[field];
-    const isArray = def ? def.type === 'array' : (pre.model.limits?.maxRefs ?? 0) !== 1;
+    const isArray = def ? def.type === 'array' : (ceiling ?? 0) !== 1;
     const current = input[field] == null ? [] : Array.isArray(input[field]) ? input[field] : [input[field]];
     input[field] = isArray ? [...current, ...urls] : urls[0];
+  };
+
+  // Into the field the catalog names for THIS model. preflight has already
+  // refused the case where there is none.
+  if (refs.length) await place(pre.refField, refs, pre.model.limits?.maxRefs);
+  for (const { field, values } of pre.fileFields) {
+    await place(field, values, inputFilesOf(pre.model).find((f) => sameField(f.name, field))?.maxItems);
   }
 
   const key = userKey || store.idempotencyKey({ model: modelId, input, count });

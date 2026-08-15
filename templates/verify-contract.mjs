@@ -144,6 +144,17 @@ const val = await cli(['generate', '--model', 'verify/test-model', '--prompt', '
 check('preflight reference limit: exit 11', val.exit === 11, `exit=${val.exit}`);
 check('preflight: VALIDATION', parseEnvelope(val.stdout)?.error?.code === 'VALIDATION');
 
+// 7b. A file addressed to a field the model does not declare → exit 11.
+// Same class of failure as a misplaced reference and the same reason to catch it
+// here: a service accepts an unknown key, bills the task and generates without
+// the file, so an unchecked --file is a paid generation that ignored it.
+const badField = await cli(['generate', '--model', 'verify/test-model', '--prompt', 'x', '--file', 'no_such_url=https://e.com/1.png', '--api-key', 'FAKE', '--dry-run', '--json']);
+check('--file into an undeclared field: exit 11', badField.exit === 11, `exit=${badField.exit}`);
+check('--file: VALIDATION', parseEnvelope(badField.stdout)?.error?.code === 'VALIDATION');
+// And a --file with no field named at all is a usage error, never a guess.
+const bareFile = await cli(['generate', '--model', 'verify/test-model', '--prompt', 'x', '--file', './x.png', '--api-key', 'FAKE', '--dry-run', '--json']);
+check('--file without a field name: exit 2', bareFile.exit === 2, `exit=${bareFile.exit}`);
+
 // 8. Budget safety limit → exit 10
 const bud = await cli(['generate', '--model', 'verify/test-model', '--prompt', 'x', '--count', '5', '--max-cost', '20', '--api-key', 'FAKE', '--dry-run', '--json']);
 check('budget safety limit: exit 10', bud.exit === 10, `exit=${bud.exit}`);

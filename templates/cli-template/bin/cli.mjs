@@ -39,6 +39,23 @@ function parseArgs(argv) {
   return { flags, positional };
 }
 
+/**
+ * `--file <field>=<path|url>`, repeatable. Split on the FIRST `=`, because a URL
+ * carries its own. A bare `--file ./x.png` is rejected rather than guessed at:
+ * which field it belongs in is the question this flag exists to answer, and the
+ * wrong answer is a paid generation that ignored the file.
+ *
+ * @returns {{field: string, value: string}[]}
+ */
+function parseFileFlags(raw) {
+  return (raw ?? []).map((entry) => {
+    const s = String(entry);
+    const eq = s.indexOf('=');
+    if (eq < 1) throw usage(`--file needs a field name: --file <field>=<path|url> (got "${s}")`);
+    return { field: s.slice(0, eq).trim(), value: s.slice(eq + 1) };
+  });
+}
+
 function parseInput(raw) {
   if (!raw) return {};
   try {
@@ -223,6 +240,10 @@ const commands = {
 
     const r = await gen.generate(key, {
       model: flags.model, prompt: flags.prompt, input: parseInput(flags.input), refs: flags.ref || [],
+      // --ref covers the primary image input. Everything else the model declares
+      // in limits.inputFiles — a closing frame, a mask, a clip — is addressed by
+      // name, because only the model knows what it calls those fields.
+      files: parseFileFlags(flags.file),
       count: num(flags.count, 'count') ?? 1, out,
       wait: !!flags.wait, pollSec: num(flags.poll, 'poll') ?? 10,
       waitTimeoutSec: num(flags['wait-timeout'], 'wait-timeout') ?? 900,

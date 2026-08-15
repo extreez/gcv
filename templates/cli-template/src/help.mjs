@@ -120,16 +120,24 @@ export const COMMANDS = {
     group: 'Generation',
     summary: 'SPENDS MONEY. Create a generation and collect the result',
     usage:
-      `${NAME} generate --model MODEL --prompt TEXT [--ref FILE]... [--count N]\n` +
-      `${' '.repeat(NAME.length)}          [--out DIR] [--wait] [--max-cost N] [--input JSON]`,
+      `${NAME} generate --model MODEL --prompt TEXT [--ref FILE]... [--file FIELD=FILE]...\n` +
+      `${' '.repeat(NAME.length)}          [--count N] [--out DIR] [--wait] [--max-cost N] [--input JSON]`,
     details:
       `When money is charged: ${PROVIDER.billing}\n\n` +
       'Therefore:\n' +
       '  --max-cost  always set it. A refusal (code 10) is cheaper than being off by 10x\n' +
       '  --dry-run   runs every check for free and without network access\n' +
-      '  repeating the same command does not create a second task — idempotency holds',
+      '  repeating the same command does not create a second task — idempotency holds\n\n' +
+      'Files go into the field the model itself declares, never a hardcoded name:\n' +
+      '  --ref     the primary image → limits.refField\n' +
+      '  --file    any other input the model lists in limits.inputFiles, named\n' +
+      '            outright: --file last_frame_url=./end.png\n\n' +
+      'A field the model does not declare is refused before the task is created:\n' +
+      'a service accepts an unknown key, bills the task and generates without the\n' +
+      'file, so the refusal has to happen while it is still free.',
     examples: [
       [`${NAME} generate --model <model> --prompt "..." --out ./out --wait --max-cost 20`, 'the usual case'],
+      [`${NAME} generate --model <model> --prompt "..." --ref ./start.png --file last_frame_url=./end.png --wait`, 'two image inputs at once'],
       [`${NAME} generate --model <model> --prompt "..." --count 4 --dry-run`, 'check the plan for free'],
     ],
   },
