@@ -46,6 +46,17 @@ JSON-конверт, preflight-валидация, предохранители 
 
 ## Установка
 
+### Через skills CLI
+
+```bash
+npx skills add extreez/gcv
+```
+
+Ставит скилл в `.claude/skills/gcv` текущего проекта. Глобально — флаг `-g`,
+для другого агента — `-a <агент>` (например `-a codex`).
+
+### Вручную
+
 ```bash
 git clone https://github.com/extreez/gcv.git ~/.claude/skills/gcv
 ```
